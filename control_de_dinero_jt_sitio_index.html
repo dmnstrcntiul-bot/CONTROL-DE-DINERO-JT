@@ -1,0 +1,472 @@
+<!--
+Control de Dinero JT
+Single-file website (index.html)
+Funciones:
+ - Fondo oscuro, logo en texto (tipografía moderna)
+ - Registrar ingresos/gastos (fecha, categoría, descripción, monto)
+ - Lista de transacciones con opción para generar comprobante PDF por transacción
+ - Resumen: saldo, totales ingresos/gastos
+ - Gráficos: doughnut (ingresos vs gastos) + barras por mes
+ - Almacenamiento en localStorage
+ - Exportar/Importar JSON (backup)
+ - Listo para publicar en GitHub Pages: subir este index.html al repo
+
+Instrucciones rápidas para publicar en GitHub Pages están al final del archivo.
+-->
+
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Control de Dinero JT</title>
+
+  <!-- Google Font (moderna) -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- html2pdf for PDF export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#0b1014;
+      --card:#0f1720;
+      --muted:#94a3b8;
+      --accent:#10b981; /* verde */
+      --accent2:#ef4444; /* rojo */
+      --glass: rgba(255,255,255,0.03);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;}
+    body{
+      margin:0;
+      font-family:'Poppins',system-ui,Arial;
+      background:linear-gradient(180deg,var(--bg) 0%, #071018 100%);
+      color:#e6eef6;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      padding:24px;
+    }
+    .container{max-width:1100px;margin:0 auto;}
+    header{display:flex;align-items:center;gap:16px;margin-bottom:20px}
+    .logo{
+      font-weight:700;font-size:20px;letter-spacing:0.6px;color:#fff;padding:10px 14px;border-radius:10px;background:linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));box-shadow: 0 6px 18px rgba(2,6,23,0.6);
+    }
+    .subtitle{color:var(--muted);font-size:13px}
+
+    .grid{display:grid;grid-template-columns:1fr 380px;gap:18px}
+    .card{background:var(--card);padding:18px;border-radius:12px;box-shadow: 0 6px 18px rgba(2,6,23,0.6);}
+
+    .summary{display:flex;gap:14px;align-items:center;justify-content:space-between}
+    .balance{font-size:28px;font-weight:600}
+    .totals{display:flex;gap:12px}
+    .totals .item{background:var(--glass);padding:8px 12px;border-radius:10px;text-align:center}
+    .small{font-size:13px;color:var(--muted)}
+
+    form{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+    label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
+    input,select,textarea{width:100%;padding:10px;border-radius:8px;background:#081018;border:1px solid rgba(255,255,255,0.03);color:#e6eef6;font-size:14px}
+    textarea{resize:vertical}
+    .full{grid-column:1/-1}
+    .actions{display:flex;gap:8px;align-items:center}
+    button{padding:10px 14px;border-radius:10px;border:0;background:linear-gradient(90deg,#0ea5a4,#06b6d4);color:#042;cursor:pointer;font-weight:600}
+    .btn-danger{background:linear-gradient(90deg,#ef4444,#f97316);color:#fff}
+    .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
+
+    .list{margin-top:12px;max-height:320px;overflow:auto;border-radius:8px}
+    .tx{display:flex;justify-content:space-between;padding:10px;border-bottom:1px solid rgba(255,255,255,0.02);align-items:center}
+    .tx .left{display:flex;gap:12px;align-items:center}
+    .amount{font-weight:700}
+    .amount.income{color:var(--accent)}
+    .amount.expense{color:var(--accent2)}
+    .tx:hover{background:rgba(255,255,255,0.01)}
+
+    .charts{display:flex;flex-direction:column;gap:12px}
+
+    footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
+
+    /* responsive */
+    @media (max-width:980px){.grid{grid-template-columns:1fr;}.card{padding:14px}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">Control de Dinero <span style="color:var(--accent);">JT</span></div>
+      <div>
+        <div style="font-weight:600">Control de Dinero JT</div>
+        <div class="subtitle">Administra tus ingresos y gastos — fondo oscuro, datos guardados en tu navegador</div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- main -->
+      <div>
+        <div class="card">
+          <div class="summary">
+            <div>
+              <div class="small">Saldo disponible</div>
+              <div class="balance" id="balance">$0.00</div>
+            </div>
+            <div class="totals">
+              <div class="item">
+                <div class="small">Ingresos</div>
+                <div id="totalIncome">$0.00</div>
+              </div>
+              <div class="item">
+                <div class="small">Gastos</div>
+                <div id="totalExpense">$0.00</div>
+              </div>
+            </div>
+          </div>
+
+          <form id="txForm">
+            <div>
+              <label>Tipo</label>
+              <select id="type">
+                <option value="income">Ingreso</option>
+                <option value="expense">Gasto</option>
+              </select>
+            </div>
+
+            <div>
+              <label>Monto (Q, $ o tu moneda)</label>
+              <input id="amount" type="number" step="0.01" placeholder="0.00" required />
+            </div>
+
+            <div>
+              <label>Categoria</label>
+              <select id="category">
+                <option value="Salario">Salario</option>
+                <option value="Ventas">Ventas</option>
+                <option value="Alimentos">Alimentos</option>
+                <option value="Transporte">Transporte</option>
+                <option value="Servicios">Servicios</option>
+                <option value="Salud">Salud</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </div>
+
+            <div>
+              <label>Fecha</label>
+              <input id="date" type="date" required />
+            </div>
+
+            <div class="full">
+              <label>Descripción</label>
+              <textarea id="description" rows="2" placeholder="Opcional"></textarea>
+            </div>
+
+            <div class="full actions">
+              <button type="submit" id="addBtn">Agregar transacción</button>
+              <button type="button" class="btn-ghost" id="clearBtn">Limpiar formulario</button>
+              <button type="button" class="btn-danger" id="clearAll">Eliminar todas</button>
+            </div>
+          </form>
+
+          <div class="list" id="txList" aria-live="polite"></div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:600">Herramientas</div>
+            <div class="small">Backup / Import</div>
+          </div>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <button id="exportJson">Exportar backup (JSON)</button>
+            <button id="importJson" class="btn-ghost">Importar backup</button>
+            <input type="file" id="fileIn" accept="application/json" style="display:none" />
+            <button id="exportAllPdf" class="btn-ghost">Exportar reporte PDF</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- sidebar -->
+      <aside>
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:600">Resumen gráfico</div>
+            <div class="small">Ingresos vs Gastos</div>
+          </div>
+          <div class="charts" style="margin-top:12px">
+            <canvas id="doughnutChart" width="300" height="260"></canvas>
+            <canvas id="barChart" width="300" height="260"></canvas>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:600">Ayuda rápida</div>
+            <div class="small">Consejos</div>
+          </div>
+          <ul style="margin-top:10px;color:var(--muted);font-size:14px">
+            <li>Haz click en una transacción para generar su comprobante PDF.</li>
+            <li>Usa Exportar/Importar para respaldos.</li>
+            <li>Datos guardados localmente en tu navegador (localStorage).</li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+
+    <footer>
+      Diseñado por Control de Dinero JT — Datos guardados localmente · <span id="today"></span>
+    </footer>
+  </div>
+
+  <script>
+    // Utilidades
+    const $ = id => document.getElementById(id);
+    const qs = sel => document.querySelector(sel);
+
+    // Estado
+    let transactions = [];
+
+    // Elementos
+    const balanceEl = $('balance');
+    const totalIncomeEl = $('totalIncome');
+    const totalExpenseEl = $('totalExpense');
+    const txList = $('txList');
+
+    const form = $('txForm');
+    const amount = $('amount');
+    const type = $('type');
+    const category = $('category');
+    const dateEl = $('date');
+    const desc = $('description');
+
+    // Charts
+    let doughnutChart, barChart;
+
+    // Init
+    function init(){
+      const today = new Date().toISOString().slice(0,10);
+      $('today').textContent = new Date().toLocaleDateString();
+      dateEl.value = today;
+
+      load();
+      render();
+      setupCharts();
+
+      form.addEventListener('submit', onAdd);
+      $('clearBtn').addEventListener('click', ()=>{ form.reset(); dateEl.value = today; });
+      $('clearAll').addEventListener('click', clearAll);
+      $('exportJson').addEventListener('click', exportJson);
+      $('importJson').addEventListener('click', ()=>$('fileIn').click());
+      $('fileIn').addEventListener('change', importJson);
+      $('exportAllPdf').addEventListener('click', exportAllPdf);
+    }
+
+    function onAdd(e){
+      e.preventDefault();
+      const amt = parseFloat(amount.value);
+      if(isNaN(amt) || amt <= 0){ alert('Ingresa un monto válido'); return; }
+      const tx = {
+        id: cryptoRandomId(),
+        type: type.value,
+        amount: parseFloat(amt.toFixed(2)),
+        category: category.value,
+        date: dateEl.value,
+        description: desc.value || ''
+      };
+      transactions.push(tx);
+      save();
+      render();
+      form.reset();
+      dateEl.value = new Date().toISOString().slice(0,10);
+    }
+
+    function cryptoRandomId(){
+      return 'id-' + Math.random().toString(36).slice(2,9);
+    }
+
+    function save(){
+      localStorage.setItem('cdjt_transactions', JSON.stringify(transactions));
+    }
+    function load(){
+      try{
+        const raw = localStorage.getItem('cdjt_transactions');
+        transactions = raw ? JSON.parse(raw) : [];
+      }catch(e){transactions=[]}
+    }
+
+    function clearAll(){
+      if(!confirm('¿Eliminar todas las transacciones? Esto no se puede deshacer.')) return;
+      transactions = [];
+      save(); render();
+    }
+
+    function render(){
+      // totals
+      const income = transactions.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+      const expense = transactions.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+      const bal = income - expense;
+
+      totalIncomeEl.textContent = formatMoney(income);
+      totalExpenseEl.textContent = formatMoney(expense);
+      balanceEl.textContent = formatMoney(bal);
+
+      // list
+      txList.innerHTML = '';
+      if(transactions.length===0){ txList.innerHTML = '<div style="padding:12px;color:var(--muted)">No hay transacciones aún.</div>'; }
+      transactions.slice().reverse().forEach(tx=>{
+        const el = document.createElement('div'); el.className='tx'; el.tabIndex=0;
+        const left = document.createElement('div'); left.className='left';
+        const icon = document.createElement('div'); icon.style.width='10px';icon.style.height='40px';icon.style.borderRadius='6px';icon.style.background = tx.type==='income' ? 'linear-gradient(180deg, rgba(16,185,129,0.2), rgba(16,185,129,0.05))' : 'linear-gradient(180deg, rgba(239,68,68,0.18), rgba(239,68,68,0.04))';
+        icon.style.marginRight='8px';
+        const meta = document.createElement('div');
+        meta.innerHTML = `<div style="font-weight:600">${tx.category} <span style=\"font-weight:400;color:var(--muted);font-size:13px;margin-left:8px\">${tx.description || ''}</span></div><div class=\"small\">${tx.date}</div>`;
+        left.appendChild(icon); left.appendChild(meta);
+
+        const right = document.createElement('div');
+        right.innerHTML = `<div style=\"text-align:right\"><div class=\"amount ${tx.type==='income'?'income':'expense'}\">${tx.type==='income'?'+':'-'} ${formatMoney(tx.amount)}</div><div class=\"small\">ID: ${tx.id}</div></div>`;
+
+        el.appendChild(left); el.appendChild(right);
+        // click to generate pdf for this tx
+        el.addEventListener('click', ()=>generateTxPdf(tx));
+        txList.appendChild(el);
+      });
+
+      updateCharts();
+    }
+
+    function formatMoney(n){
+      // default to two decimals and thousands
+      return n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    }
+
+    // Backup
+    function exportJson(){
+      const data = { exportedAt: new Date().toISOString(), transactions };
+      const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download = `cdjt_backup_${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url);
+    }
+
+    function importJson(e){
+      const f = e.target.files?.[0];
+      if(!f) return;
+      const reader = new FileReader();
+      reader.onload = function(){
+        try{
+          const obj = JSON.parse(reader.result);
+          if(!obj.transactions) throw new Error('Archivo no válido');
+          if(!confirm('Importar backup reemplazará tus transacciones actuales. Continuar?')) return;
+          transactions = obj.transactions;
+          save(); render();
+          alert('Importado correctamente');
+        }catch(err){ alert('Error al importar: ' + err.message); }
+      }
+      reader.readAsText(f);
+      e.target.value = '';
+    }
+
+    // PDF: generate receipt for a single transaction
+    function generateTxPdf(tx){
+      const el = document.createElement('div');
+      el.style.padding='20px'; el.style.background='#fff'; el.style.color='#000'; el.style.fontFamily='Poppins,Arial'; el.style.borderRadius='8px';
+      el.innerHTML = `
+        <div style="text-align:center;margin-bottom:14px"><h2>Comprobante - Control de Dinero JT</h2></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px"><div><strong>ID</strong></div><div>${tx.id}</div></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px"><div><strong>Tipo</strong></div><div>${tx.type==='income'?'Ingreso':'Gasto'}</div></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px"><div><strong>Categoria</strong></div><div>${tx.category}</div></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px"><div><strong>Monto</strong></div><div>${tx.type==='income'?'+':'-'} ${formatMoney(tx.amount)}</div></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px"><div><strong>Fecha</strong></div><div>${tx.date}</div></div>
+        <div style="margin-top:12px"><strong>Descripción</strong><div>${tx.description || '—'}</div></div>
+        <div style="margin-top:20px;color:#666;font-size:12px">Generado: ${new Date().toLocaleString()}</div>
+      `;
+      // use html2pdf
+      html2pdf().set({margin:10, filename:`comprobante_${tx.id}.pdf`, html2canvas:{scale:2}}).from(el).save();
+    }
+
+    // Export full report PDF
+    function exportAllPdf(){
+      const el = document.createElement('div');
+      el.style.padding='18px'; el.style.background='#fff'; el.style.color='#000'; el.style.fontFamily='Poppins,Arial';
+      el.innerHTML = `<h2>Reporte - Control de Dinero JT</h2><div>Generado: ${new Date().toLocaleString()}</div><hr />`;
+      const totals = `<div style="display:flex;gap:12px;margin-top:10px"><div><strong>Ingresos:</strong> ${formatMoney(transactions.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0))}</div><div><strong>Gastos:</strong> ${formatMoney(transactions.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0))}</div><div><strong>Saldo:</strong> ${formatMoney(transactions.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0) - transactions.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0))}</div></div>`;
+      el.innerHTML += totals + '<hr />';
+      el.innerHTML += '<div style="margin-top:8px">';
+      transactions.forEach(tx=>{
+        el.innerHTML += `<div style="margin-bottom:8px;padding:8px;border-bottom:1px solid #eee"><div><strong>${tx.category}</strong> - ${tx.date} <span style="float:right">${tx.type==='income'?'+':'-'} ${formatMoney(tx.amount)}</span></div><div style="color:#666">${tx.description||'—'} — ID:${tx.id}</div></div>`;
+      });
+      el.innerHTML += '</div>';
+      html2pdf().set({margin:10, filename:`reporte_cdjt_${new Date().toISOString().slice(0,10)}.pdf`, html2canvas:{scale:2}}).from(el).save();
+    }
+
+    // Charts setup
+    function setupCharts(){
+      const dctx = $('doughnutChart').getContext('2d');
+      const bctx = $('barChart').getContext('2d');
+
+      doughnutChart = new Chart(dctx, {
+        type:'doughnut',
+        data:{labels:['Ingresos','Gastos'],datasets:[{data:[1,1],backgroundColor:['#10b981','#ef4444'],hoverOffset:6}]},
+        options:{plugins:{legend:{position:'bottom',labels:{color:'#cbd5e1'}}}}
+      });
+
+      barChart = new Chart(bctx, {
+        type:'bar',
+        data:{labels:[],datasets:[{label:'Ingresos',data:[],borderRadius:6,barThickness:18},{label:'Gastos',data:[],borderRadius:6,barThickness:18}]},
+        options:{responsive:true,plugins:{legend:{position:'bottom',labels:{color:'#cbd5e1'}}},scales:{x:{ticks:{color:'#cbd5e1'}},y:{ticks:{color:'#cbd5e1'}}}}
+      });
+
+      updateCharts();
+    }
+
+    function updateCharts(){
+      if(!doughnutChart) return;
+      const income = transactions.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+      const expense = transactions.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+      doughnutChart.data.datasets[0].data = [income || 0.0001, expense || 0.0001];
+      doughnutChart.update();
+
+      // prepare monthly bars for last 6 months
+      const months = getLastNMonths(6);
+      const incData = months.map(m=>sumByMonth(m,'income'));
+      const expData = months.map(m=>sumByMonth(m,'expense'));
+      barChart.data.labels = months.map(m=>m.label);
+      barChart.data.datasets[0].data = incData;
+      barChart.data.datasets[1].data = expData;
+      barChart.update();
+    }
+
+    function getLastNMonths(n){
+      const out = [];
+      const now = new Date();
+      for(let i=n-1;i>=0;i--){
+        const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+        out.push({year:d.getFullYear(),month:d.getMonth()+1,label:d.toLocaleString(undefined,{month:'short',year:'numeric'})});
+      }
+      return out;
+    }
+    function sumByMonth(m, type){
+      const mm = m.month.toString().padStart(2,'0');
+      const year = m.year;
+      return transactions.filter(t=>{
+        if(!t.date) return false;
+        const parts = t.date.split('-');
+        return parseInt(parts[0])===year && parseInt(parts[1])===parseInt(mm) && t.type===type;
+      }).reduce((s,t)=>s+t.amount,0);
+    }
+
+    // Init run
+    init();
+  </script>
+
+  <!--
+  Instrucciones para publicar en GitHub Pages:
+
+  1) Crea un nuevo repositorio en GitHub (ej: control-de-dinero-jt)
+  2) Sube este archivo con nombre index.html (botón 'Add file' -> 'Upload files')
+  3) En Settings -> Pages, selecciona la rama 'main' (o 'master') y la carpeta '/' como source, guarda.
+  4) GitHub Pages publicará tu sitio en: https://<tu-usuario>.github.io/<nombre-repo>/ (toma unos minutos)
+
+  Alternativa: usar Netlify Drop (arrastrar y soltar el index.html) para publicar gratis.
+
+  Si quieres, te ayudo a hacer el repo y subir los archivos paso a paso.
+  -->
+</body>
+</html>
